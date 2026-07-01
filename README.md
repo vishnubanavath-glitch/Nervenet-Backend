@@ -1,68 +1,88 @@
-# Nervenet MVP: Dual-Engine Database Assistant with Privacy Shield
+# Nervenet MVP: Independent Dual Model-Flavor Database Assistants
 
-Nervenet is a premium, responsive database assistant and visualization system designed for the electricity meter department. It operates as a dual-application ecosystem with a single codebase structure, allowing you to run the frontend client using either **Anthropic Claude** or **OpenAI ChatGPT** as the core intelligence engine.
+This repository contains two completely **independent** and **unconnected** Streamlit chat applications that share the same local database and helper utility structure. The difference between them is the underlying Language Model and API client they use. They do not share sessions, converse with each other, or have any active connection.
 
-Both frontends utilize the same database repository, privacy mechanisms, and custom styling, but are optimized for their respective language models.
+* **[app.py](file:///e:/BSS/Nervenet%20MVP/app.py)** (Claude Version): Powered by Anthropic's Claude API (`claude-opus-4-8`).
+* **[appV2.py](file:///e:/BSS/Nervenet%20MVP/appV2.py)** (ChatGPT Version): Powered by OpenAI's ChatGPT API (`gpt-4o`).
 
 ---
 
-## Architecture Overview
+## Design Rationale
+
+The project is intentionally structured as two standalone entry points (`app.py` and `appV2.py`) rather than a single unified application with a model-selector toggle. This approach was chosen for the following reasons:
+* **Distinct API SDKs**: Anthropic (`anthropic`) and OpenAI (`openai`) utilize completely different client SDK interfaces, credential setups, and connection structures. 
+* **Tool-Calling Conventions**: The loop structures for tool execution and response returns differ significantly between the Anthropic API (which uses a single message block-list with `tool_use` and `tool_result` roles) and the OpenAI API (which uses specific `tool_calls` attributes and independent `tool` roles).
+* **Prompting Behaviors**: Claude and GPT models respond best to customized system prompt formatting and guidelines (e.g., Claude uses a decoupled JSON strategy for charts, while GPT excels at drawing and injecting SVGs directly inline).
+
+Separating the applications allows both client interfaces to remain clean, highly optimized, and easy to maintain independently.
+
+---
+
+## Architectural Layout
+
+Both apps are alternative implementations of a customer support assistant for the electricity meter department. Although they share the underlying helper modules and the local Excel database, they run completely standalone from each other.
 
 ```mermaid
 graph TD
-    User([User]) <--> Client[Streamlit Frontend App]
-    
-    subgraph Client App
-        UI[Streamlit UI & Session State]
-        PE[Privacy Engine]
-        SE[SVG Chart Engine]
+    subgraph App 1: Claude Version (app.py)
+        UI1[Streamlit UI 1]
+        PE1[Privacy Engine]
+        SE1[SVG Engine]
+        Anthropic[Anthropic Claude API]
+        MCP1[FastMCP Server Subprocess]
     end
-    
-    subgraph Local Secure Subprocess
-        MCP[FastMCP Server]
-        Repo[Excel Repository]
+
+    subgraph App 2: ChatGPT Version (appV2.py)
+        UI2[Streamlit UI 2]
+        PE2[Privacy Engine]
+        SE2[SVG Engine]
+        OpenAI[OpenAI ChatGPT API]
+        MCP2[FastMCP Server Subprocess]
+    end
+
+    subgraph Shared Local Assets
         DB[(Excel Database: tpcodl_Test.xlsx)]
     end
-    
-    subgraph External Cloud APIs
-        Anthropic[Anthropic Claude API]
-        OpenAI[OpenAI GPT API]
-    end
 
-    Client <--> PE
-    UI <--> MCP
-    MCP <--> Repo
-    Repo <--> DB
-    
-    %% Dual Engine Flow
-    UI -- 1. app.py --> Anthropic
-    UI -- 1. appV2.py --> OpenAI
-    
-    %% Privacy flow
-    PE -- Tokenizes PII --> Anthropic
-    PE -- Tokenizes PII --> OpenAI
-    
-    %% SVG Engine flow
-    UI -- 2. Decoupled JSON --> SE
-    SE <--> OpenAI
-    SE -- 3. Render Decrypted SVG --> UI
+    UI1 --> PE1
+    PE1 --> Anthropic
+    UI1 --> MCP1
+    MCP1 --> DB
+    UI1 --> SE1
+    SE1 --> OpenAI
+
+    UI2 --> PE2
+    PE2 --> OpenAI
+    UI2 --> MCP2
+    MCP2 --> DB
+    UI2 --> SE2
+    SE2 --> OpenAI
 ```
 
-### Key Components
+### Shared Under-the-Hood Components
+Although the frontends are completely separate, they both utilize the following local utilities and database files:
 
-1. **Dual Frontend Applications (Streamlit)**
-   - **[app.py](file:///e:/BSS/Nervenet%20MVP/app.py)** (Claude Engine): Leverages `claude-opus-4-8` through [claude.py](file:///e:/BSS/Nervenet%20MVP/claude.py). It delegates SVG chart design to a decoupled chart engine by requesting structured JSON and feeding it to a separate model call.
-   - **[appV2.py](file:///e:/BSS/Nervenet%20MVP/appV2.py)** (ChatGPT Engine): Leverages `gpt-4o` through [chatGpt.py](file:///e:/BSS/Nervenet%20MVP/chatGpt.py). It instructs ChatGPT to output inline SVGs directly, falling back to decoupled chart data when necessary.
-2. **Local Database & MCP Server**
-   - The [mcp_server/server.py](file:///e:/BSS/Nervenet%20MVP/mcp_server/server.py) is a Model Context Protocol (MCP) server that runs as a local subprocess.
-   - It interfaces with the Excel spreadsheet database ([tpcodl_Test.xlsx](file:///e:/BSS/Nervenet%20MVP/tpcodl_Test.xlsx)) through the `ExcelRepository` and `QueryService`.
-   - Exposes tools to query, aggregate, search, get statistics, and modify records without loading the entire database into the cloud LLM's context.
-3. **Privacy Shield Engine ([privacy_engine.py](file:///e:/BSS/Nervenet%20MVP/privacy_engine.py))**
-   - Automatically detects and encrypts/tokenizes PII fields (such as `uidNo`, `mobileNo`, `latitude`, `longitude`) in the format `<//PREFIX-UUID//>` (e.g., `<//UID-4bdf4b468e55//>`) before it is sent to external APIs.
-   - Restores the original values (detokenization) locally at render-time, guaranteeing that client secrets never leave your local workspace.
-   - Includes a visual **Privacy & Tokenization Inspector** at the bottom of the UI to audit raw payloads, dynamic mappings, and raw responses.
-4. **SVG Visualizer Engine ([svg_engine.py](file:///e:/BSS/Nervenet%20MVP/svg_engine.py))**
-   - A dedicated engine powered by OpenAI (`gpt-5.2`) that transforms structured JSON output from MCP tools into high-quality, animated, and responsive SVG charts.
+1. **Local Database & MCP Server**
+   - The database records are kept in a local Excel file ([tpcodl_Test.xlsx](file:///e:/BSS/Nervenet%20MVP/tpcodl_Test.xlsx)).
+   - Both apps spawn their own instance of the local Model Context Protocol (MCP) server ([mcp_server/server.py](file:///e:/BSS/Nervenet%20MVP/mcp_server/server.py)) in a subprocess to run queries and updates.
+2. **Privacy Shield Engine ([privacy_engine.py](file:///e:/BSS/Nervenet%20MVP/privacy_engine.py))**
+   - Implements local PII encryption and tokenization for sensitive columns like `uidNo`, `mobileNo`, and coordinates.
+   - De-tokenizes the encrypted values locally at render-time, so sensitive information is never sent to Anthropic or OpenAI.
+3. **SVG Visualizer Engine ([svg_engine.py](file:///e:/BSS/Nervenet%20MVP/svg_engine.py))**
+   - Renders animated, responsive SVG charts from structured JSON using a separate OpenAI API call.
+
+---
+
+## Technical Comparison
+
+| Feature | Claude App (`app.py`) | ChatGPT App (`appV2.py`) |
+| :--- | :--- | :--- |
+| **Connection** | Independent (Does not connect to `appV2.py`) | Independent (Does not connect to `app.py`) |
+| **Model Used** | `claude-opus-4-8` | `gpt-4o` |
+| **API Provider** | Anthropic | OpenAI |
+| **API Key Needed** | `CLAUDE_API` or `ANTHROPIC_API_KEY` | `OPENAI_API` or `OPENAI_API_KEY` |
+| **Tool Calling Loop** | Custom Anthropic tool calling protocol | Standard OpenAI chat completions tool calling |
+| **Visualization Prompt** | Instructs Claude to return structured JSON | Instructs ChatGPT to render inline SVG |
 
 ---
 
@@ -71,41 +91,25 @@ graph TD
 ```
 Nervenet MVP/
 ├── mcp_server/
-│   ├── __pycache__/
-│   └── server.py              # FastMCP Database server (CRUD, search, stats, aggregates)
-├── .env                       # Local environment secrets (not committed)
-├── .gitignore                 # Excludes caches, virtual envs, IDE configs & secrets
-├── app.py                     # Streamlit frontend using Claude (Anthropic API)
-├── appV2.py                   # Streamlit frontend using ChatGPT (OpenAI API)
-├── claude.py                  # API helper layer for Claude integrations
-├── chatGpt.py                 # API helper layer for OpenAI ChatGPT integrations
-├── privacy_engine.py          # Client-side PII encryption/tokenization shield
-├── requirements.txt           # Python library dependencies
-├── svg_engine.py              # Isolated SVG generator for chart visualization
-├── test_crud.py               # 10-step verification test suite for database server tools
-└── tpcodl_Test.xlsx           # Excel-based local database file
+│   └── server.py              # FastMCP Database server (Exposes CRUD, search, aggregates)
+├── .env                       # Local environment variables containing API keys (ignored)
+├── .gitignore                 # Configured to ignore caches, virtual envs, and secrets
+├── app.py                     # Standalone Streamlit app using Claude
+├── appV2.py                   # Standalone Streamlit app using ChatGPT
+├── claude.py                  # API handler and MCP connection logic for app.py
+├── chatGpt.py                 # API handler and MCP connection logic for appV2.py
+├── privacy_engine.py          # Shared utility: Client-side PII tokenization shield
+├── requirements.txt           # Shared Python dependencies
+├── svg_engine.py              # Shared utility: Isolated SVG chart compiler (uses OpenAI)
+├── test_crud.py               # Database verification suite
+└── tpcodl_Test.xlsx           # Local database (Excel sheet)
 ```
-
----
-
-## Comparison: Claude Engine vs. ChatGPT Engine
-
-| Feature | Claude App (`app.py`) | ChatGPT App (`appV2.py`) |
-| :--- | :--- | :--- |
-| **Model Used** | `claude-opus-4-8` (configurable) | `gpt-4o` (configurable) |
-| **API Integration** | Anthropic Python SDK | OpenAI Python SDK |
-| **Tool Calling Loop** | Built around Anthropic's tool structures | Standard OpenAI function tool calls |
-| **System Prompt** | Instructs Claude to return `<chart_data>` tags | Instructs ChatGPT to generate raw inline SVGs |
-| **Visualization Style**| Strictly decoupled chart data generation | Directly inline SVGs with decoupled fallback |
-| **UI Look & Feel** | Identical premium adaptiveness, Outfit typography, custom styling, and sidebar controls |
 
 ---
 
 ## Installation & Setup
 
 ### 1. Set Up Virtual Environment
-
-Initialize and activate a virtual environment:
 
 - **Windows (PowerShell)**:
   ```powershell
@@ -125,19 +129,18 @@ Initialize and activate a virtual environment:
 
 ### 2. Install Dependencies
 
-Install the required packages from `requirements.txt`:
 ```bash
 pip install -r requirements.txt
 ```
 
 ### 3. Configure Environment Variables
 
-Create a `.env` file in the root folder of the project with your API keys:
+Create a `.env` file in the root folder of the project:
 ```env
-# Anthropic Claude API Key (Required for app.py)
+# Required for app.py (Claude version)
 CLAUDE_API=your_anthropic_api_key_here
 
-# OpenAI API Key (Required for appV2.py and svg_engine.py)
+# Required for appV2.py (ChatGPT version) and svg_engine.py (visualizations)
 OPENAI_API=your_openai_api_key_here
 ```
 
@@ -145,28 +148,26 @@ OPENAI_API=your_openai_api_key_here
 
 ## Running the Applications
 
-Before running, ensure your virtual environment is active.
+Since the applications are completely independent, run whichever version you prefer:
 
-### Run the Claude Application
-To launch the app using Claude (`claude-opus-4-8`):
+### Run the Claude Version (`app.py`)
 ```bash
 streamlit run app.py
 ```
 
-### Run the ChatGPT Application
-To launch the app using ChatGPT (`gpt-4o`):
+### Run the ChatGPT Version (`appV2.py`)
 ```bash
 streamlit run appV2.py
 ```
 
-Streamlit will launch a local server and automatically open the application in your default web browser (typically at `http://localhost:8501`).
+Each command opens a separate Streamlit server session in your browser (typically defaulting to `http://localhost:8501`).
 
 ---
 
-## Verifying the Database Server (Tests)
+## Verification Testing
 
-You can run the verification suite to execute automated tests against all MCP tools (discover schema, query, statistics, search, CRUD, and aggregations) with:
+To test the database repo and MCP tools without launching Streamlit, execute the verification suite:
 ```bash
 python test_crud.py
 ```
-This ensures the `ExcelRepository` is loading, editing, and querying the Excel database sheet (`tpcodl_Test.xlsx`) correctly.
+This tests all 10 base query capabilities (caching, querying, filtering, aggregates, stats, search, and CRUD) against the local [tpcodl_Test.xlsx](file:///e:/BSS/Nervenet%20MVP/tpcodl_Test.xlsx) database.
