@@ -1,0 +1,6 @@
+streamlit
+anthropic
+python-dotenv
+mcp 
+pandas 
+openpyxl
