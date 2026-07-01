@@ -59,17 +59,75 @@ graph TD
     SE2 --> OpenAI
 ```
 
-### Shared Under-the-Hood Components
-Although the frontends are completely separate, they both utilize the following local utilities and database files:
+---
 
-1. **Local Database & MCP Server**
-   - The database records are kept in a local Excel file ([tpcodl_Test.xlsx](file:///e:/BSS/Nervenet%20MVP/tpcodl_Test.xlsx)).
-   - Both apps spawn their own instance of the local Model Context Protocol (MCP) server ([mcp_server/server.py](file:///e:/BSS/Nervenet%20MVP/mcp_server/server.py)) in a subprocess to run queries and updates.
-2. **Privacy Shield Engine ([privacy_engine.py](file:///e:/BSS/Nervenet%20MVP/privacy_engine.py))**
-   - Implements local PII encryption and tokenization for sensitive columns like `uidNo`, `mobileNo`, and coordinates.
-   - De-tokenizes the encrypted values locally at render-time, so sensitive information is never sent to Anthropic or OpenAI.
-3. **SVG Visualizer Engine ([svg_engine.py](file:///e:/BSS/Nervenet%20MVP/svg_engine.py))**
-   - Renders animated, responsive SVG charts from structured JSON using a separate OpenAI API call.
+## The Privacy Shield Engine
+
+### Why it exists
+When utilizing cloud-hosted language models (such as Anthropic or OpenAI), sending raw customer Personally Identifiable Information (PII) over the internet introduces compliance, privacy, and security risks. 
+
+The **Privacy Shield Engine** ([privacy_engine.py](file:///e:/BSS/Nervenet%20MVP/privacy_engine.py)) resolves this by establishing a secure tokenization boundary. PII values are replaced with randomized, unique tokens **locally** before they are transmitted. The external LLM only sees and processes these anonymous tokens. The mapping between tokens and actual values is stored exclusively in local memory and is used to decrypt data right before displaying it on the user's screen.
+
+### Supported PII Fields & Token Format
+The engine automatically detects and tokenizes the following fields:
+* **`uidNo`**: Tokenized as `<//UID-[12-char-UUID]//>`
+* **`mobileNo`**: Tokenized as `<//PHONE-[12-char-UUID]//>`
+* **`lat` / `lon` (Coordinates)**: Tokenized as `<//LAT-[12-char-UUID]//>` / `<//LON-[12-char-UUID]//>`
+
+---
+
+## Visual Privacy Data Flow (Sequence Diagram)
+
+The sequence diagram below visualizes the life cycle of a query. In this example, the user queries the subdivision for customer ID `5912345` with phone number `9876543210`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User Screen
+    participant App as Streamlit Client
+    participant PE as Privacy Engine
+    participant LLM as Cloud LLM (Claude/GPT)
+    participant MCP as Local MCP Server
+    participant DB as Excel File
+
+    User->>App: Submits query: "Show subdivision for 5912345"
+    
+    Note over App, PE: Step 1: Tokenize Request
+    App->>PE: tokenize_text("Show subdivision for 5912345")
+    PE-->>App: Returns: "Show subdivision for <//UID-d2a83e0618bc//>"
+    
+    Note over App, LLM: Step 2: Send Anonymous Payload
+    App->>LLM: Sends tokenized prompt
+    
+    Note over LLM: LLM decides to call database tool
+    LLM-->>App: requests query(filters=[{uidNo: "<//UID-d2a83e0618bc//>"}])
+    
+    Note over App, PE: Step 3: Decrypt Tool Arguments
+    App->>PE: decrypt_tool_args({uidNo: "<//UID-d2a83e0618bc//>"})
+    PE-->>App: Returns: {uidNo: "5912345"}
+    
+    Note over App, MCP: Step 4: Run Query Locally
+    App->>MCP: call query(filters=[{uidNo: "5912345"}])
+    MCP->>DB: Reads from Excel
+    DB-->>MCP: Returns real record
+    MCP-->>App: Returns: {uidNo: "5912345", subDiv: "RASULGARH", mobileNo: "9876543210"}
+    
+    Note over App, PE: Step 5: Encrypt Database Output
+    App->>PE: encrypt_record(output)
+    PE-->>App: Returns: {uidNo: "<//UID-d2a83e0618bc//>", subDiv: "RASULGARH", mobileNo: "<//PHONE-a1b2c3d4e5f6//>"}
+    
+    Note over App, LLM: Step 6: Return Encrypted Data to LLM
+    App->>LLM: Sends tool result to LLM
+    
+    Note over LLM: LLM formulates final answer
+    LLM-->>App: Returns response: "Customer <//UID-d2a83e0618bc//> is in RASULGARH. Phone is <//PHONE-a1b2c3d4e5f6//>."
+    
+    Note over App, PE: Step 7: Decrypt Response for Display
+    App->>PE: detokenize_text(response)
+    PE-->>App: Returns: "Customer 5912345 is in RASULGARH. Phone is 9876543210."
+    
+    App->>User: Displays: "Customer 5912345 is in RASULGARH. Phone is 9876543210."
+```
 
 ---
 
