@@ -24,7 +24,7 @@ Both apps are alternative implementations of a customer support assistant for th
 
 ```mermaid
 graph TD
-    subgraph App 1: Claude Version (app.py)
+    subgraph app_claude ["App 1: Claude Version (app.py)"]
         UI1[Streamlit UI 1]
         PE1[Privacy Engine]
         SE1[SVG Engine]
@@ -32,7 +32,7 @@ graph TD
         MCP1[FastMCP Server Subprocess]
     end
 
-    subgraph App 2: ChatGPT Version (appV2.py)
+    subgraph app_gpt ["App 2: ChatGPT Version (appV2.py)"]
         UI2[Streamlit UI 2]
         PE2[Privacy Engine]
         SE2[SVG Engine]
@@ -40,7 +40,7 @@ graph TD
         MCP2[FastMCP Server Subprocess]
     end
 
-    subgraph Shared Local Assets
+    subgraph shared_assets ["Shared Local Assets"]
         DB[(Excel Database: tpcodl_Test.xlsx)]
     end
 
